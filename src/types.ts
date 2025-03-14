@@ -1,4 +1,5 @@
 // src/types.ts
+
 // @ts-ignore
 import type { UUID } from 'uuid';
 
@@ -32,4 +33,11 @@ export interface Tool {
     tool_spindle_speed: number;
     tool_surface_speed: number;
     tool_vendor: string | null;
+    coordinates?: BitCoordinate[]; // Added coordinates relation
+}
+
+export interface BitCoordinate {
+    bit_id: UUID;
+    name: string;
+    z: number;
 }

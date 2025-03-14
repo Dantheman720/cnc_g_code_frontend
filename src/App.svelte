@@ -2,7 +2,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { v4 as uuidv4 } from 'uuid';
-  import type { Tool } from './types';
+  import type { Tool, BitCoordinate } from './types';
 
   let tools: Tool[] = [];
   let selectedTool: Tool | null = null;
@@ -11,21 +11,47 @@
   let error: string | null = null;
 
   const API_URL = 'http://192.168.4.187:8000/api/router-bits';
+  const COORDINATES_API_URL = 'http://192.168.4.187:8000/api/router-bits/coordinates';
 
   async function fetchTools(): Promise<void> {
     try {
       loading = true;
       error = null;
-      const response = await fetch(API_URL);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      const [toolsResponse, coordsResponse] = await Promise.all([
+        fetch(API_URL),
+        fetch(COORDINATES_API_URL)
+      ]);
+
+      if (!toolsResponse.ok || !coordsResponse.ok) {
+        throw new Error('Failed to fetch data');
       }
-      tools = await response.json() as Tool[];
+
+      const toolsData = await toolsResponse.json() as Tool[];
+      const coordsData = await coordsResponse.json() as BitCoordinate[];
+
+      // Join coordinates with tools
+      tools = toolsData.map(tool => ({
+        ...tool,
+        coordinates: coordsData.filter(coord => coord.bit_id === tool.id)
+      }));
     } catch (err) {
       error = err instanceof Error ? err.message : 'An error occurred';
-      console.error('Failed to fetch tools:', err);
+      console.error('Failed to fetch data:', err);
     } finally {
       loading = false;
+    }
+  }
+
+  async function saveCoordinates(bitId: string, coordinates: BitCoordinate[]): Promise<void> {
+    try {
+      await fetch(`${COORDINATES_API_URL}/${bitId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(coordinates)
+      });
+    } catch (err) {
+      console.error('Failed to save coordinates:', err);
+      throw err;
     }
   }
 
@@ -61,31 +87,72 @@
       tool_shoulder_length: 0,
       tool_spindle_speed: 0,
       tool_surface_speed: 0,
-      tool_vendor: null
+      tool_vendor: null,
+      coordinates: []
     };
     showForm = true;
   }
 
   function editTool(tool: Tool): void {
-    selectedTool = { ...tool };
+    selectedTool = { ...tool, coordinates: tool.coordinates ? [...tool.coordinates] : [] };
     showForm = true;
   }
 
-  function saveTool(): void {
+  function addCoordinate(): void {
     if (selectedTool) {
-      if (!selectedTool.id) {
-        tools = [...tools, selectedTool];
-      } else {
-        tools = tools.map(t => t.id === selectedTool!.id ? selectedTool! : t);
+      selectedTool.coordinates = [
+        ...(selectedTool.coordinates || []),
+        { bit_id: selectedTool.id, name: '', z: 0 }
+      ];
+    }
+  }
+
+  function removeCoordinate(index: number): void {
+    if (selectedTool && selectedTool.coordinates) {
+      selectedTool.coordinates = selectedTool.coordinates.filter((_, i) => i !== index);
+    }
+  }
+
+  async function saveTool(): Promise<void> {
+    if (selectedTool) {
+      try {
+        const isNew = !tools.some(t => t.id === selectedTool!.id);
+        const method = isNew ? 'POST' : 'PUT';
+        const url = isNew ? API_URL : `${API_URL}/${selectedTool.id}`;
+
+        // Save tool
+        const toolResponse = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...selectedTool, coordinates: undefined })
+        });
+
+        if (!toolResponse.ok) {
+          throw new Error('Failed to save tool');
+        }
+
+        // Save coordinates
+        if (selectedTool.coordinates) {
+          await saveCoordinates(selectedTool.id, selectedTool.coordinates);
+        }
+
+        await fetchTools(); // Refresh data
+        showForm = false;
+        selectedTool = null;
+      } catch (err) {
+        error = err instanceof Error ? err.message : 'Failed to save tool';
       }
-      showForm = false;
-      selectedTool = null;
     }
   }
 
   function deleteTool(id: string): void {
     if (confirm('Are you sure you want to delete this tool?')) {
-      tools = tools.filter(t => t.id !== id);
+      fetch(`${API_URL}/${id}`, { method: 'DELETE' })
+              .then(() => fetchTools())
+              .catch(err => {
+                error = err instanceof Error ? err.message : 'Failed to delete tool';
+                console.error('Delete error:', err);
+              });
     }
   }
 
@@ -117,6 +184,7 @@
           <th>Type</th>
           <th>Diameter</th>
           <th>Description</th>
+          <th>Coordinates</th>
           <th>Actions</th>
         </tr>
         </thead>
@@ -127,6 +195,7 @@
             <td>{tool.type}</td>
             <td>{tool.diameter} {tool.tool_unit}</td>
             <td>{tool.description}</td>
+            <td>{tool.coordinates?.length || 0}</td>
             <td>
               <button on:click={() => editTool(tool)}>Edit</button>
               <button on:click={() => deleteTool(tool.id)}>Delete</button>
@@ -178,35 +247,21 @@
         </label>
       </div>
 
-      <div>
-        <label>Tool Number:
-          <input type="number" bind:value={selectedTool.tool_number} required />
-        </label>
-      </div>
-
-      <div>
-        <label>Flute Length:
-          <input type="number" step="0.0001" bind:value={selectedTool.tool_flute_length} required />
-        </label>
-      </div>
-
-      <div>
-        <label>Number of Flutes:
-          <input type="number" bind:value={selectedTool.tool_number_of_flutes} required />
-        </label>
-      </div>
-
-      <div>
-        <label>Overall Length:
-          <input type="number" step="0.0001" bind:value={selectedTool.tool_overall_length} required />
-        </label>
-      </div>
-
-      <div>
-        <label>Spindle Speed:
-          <input type="number" bind:value={selectedTool.tool_spindle_speed} required />
-        </label>
-      </div>
+      <h3>Coordinates</h3>
+      {#if selectedTool.coordinates?.length}
+        {#each selectedTool.coordinates as coord, index (coord.name)}
+          <div class="coordinate-row">
+            <label>Name:
+              <input bind:value={coord.name} required />
+            </label>
+            <label>Z:
+              <input type="number" step="0.0001" bind:value={coord.z} required />
+            </label>
+            <button type="button" on:click={() => removeCoordinate(index)}>Remove</button>
+          </div>
+        {/each}
+      {/if}
+      <button type="button" on:click={addCoordinate}>Add Coordinate</button>
 
       <div class="form-actions">
         <button type="submit">Save</button>
@@ -250,6 +305,15 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+  }
+
+  .coordinate-row {
+    flex-direction: row;
+    gap: 1rem;
+    align-items: flex-end;
+    border: 1px solid #eee;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
   }
 
   .form-actions {
