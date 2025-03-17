@@ -1,4 +1,3 @@
-<!-- src/App.svelte -->
 <script lang="ts">
   import { onMount } from 'svelte';
   import { v4 as uuidv4 } from 'uuid';
@@ -29,10 +28,9 @@
       const toolsData = await toolsResponse.json() as Tool[];
       const coordsData = await coordsResponse.json() as BitCoordinate[];
 
-      // Join coordinates with tools
       tools = toolsData.map(tool => ({
         ...tool,
-        coordinates: coordsData.filter(coord => coord.bit_id === tool.id)
+        coordinate: coordsData.find(coord => coord.bit_id === tool.id)
       }));
     } catch (err) {
       error = err instanceof Error ? err.message : 'An error occurred';
@@ -42,16 +40,40 @@
     }
   }
 
-  async function saveCoordinates(bitId: string, coordinates: BitCoordinate[]): Promise<void> {
+  async function saveCoordinate(coordinate: BitCoordinate): Promise<void> {
     try {
-      await fetch(`${COORDINATES_API_URL}/${bitId}`, {
-        method: 'PUT',
+      const response = await fetch(`${COORDINATES_API_URL}`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(coordinates)
+        body: JSON.stringify(coordinate)
       });
+      if (!response.ok) {
+        throw new Error('Failed to save coordinate');
+      }
+      await fetchTools();
     } catch (err) {
-      console.error('Failed to save coordinates:', err);
-      throw err;
+      error = err instanceof Error ? err.message : 'Failed to save coordinate';
+      console.error('Coordinate save error:', err);
+    }
+  }
+
+  async function updateCoordinateZ(coordinate: BitCoordinate): Promise<void> {
+    try {
+      const response = await fetch(
+              `${COORDINATES_API_URL}/${coordinate.bit_id}`,
+              {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(coordinate)
+              }
+      );
+      if (!response.ok) {
+        throw new Error('Failed to update coordinate');
+      }
+      await fetchTools();
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to update coordinate';
+      console.error('Coordinate update error:', err);
     }
   }
 
@@ -88,28 +110,18 @@
       tool_spindle_speed: 0,
       tool_surface_speed: 0,
       tool_vendor: null,
-      coordinates: []
     };
     showForm = true;
   }
 
   function editTool(tool: Tool): void {
-    selectedTool = { ...tool, coordinates: tool.coordinates ? [...tool.coordinates] : [] };
+    selectedTool = { ...tool, coordinate: tool.coordinate ? { ...tool.coordinate } : undefined };
     showForm = true;
   }
 
   function addCoordinate(): void {
     if (selectedTool) {
-      selectedTool.coordinates = [
-        ...(selectedTool.coordinates || []),
-        { bit_id: selectedTool.id, name: '', z: 0 }
-      ];
-    }
-  }
-
-  function removeCoordinate(index: number): void {
-    if (selectedTool && selectedTool.coordinates) {
-      selectedTool.coordinates = selectedTool.coordinates.filter((_, i) => i !== index);
+      selectedTool.coordinate = { bit_id: selectedTool.id, name: '', z: 0 };
     }
   }
 
@@ -120,23 +132,21 @@
         const method = isNew ? 'POST' : 'PUT';
         const url = isNew ? API_URL : `${API_URL}/${selectedTool.id}`;
 
-        // Save tool
         const toolResponse = await fetch(url, {
           method,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...selectedTool, coordinates: undefined })
+          body: JSON.stringify({ ...selectedTool, coordinate: undefined })
         });
 
         if (!toolResponse.ok) {
           throw new Error('Failed to save tool');
         }
 
-        // Save coordinates
-        if (selectedTool.coordinates) {
-          await saveCoordinates(selectedTool.id, selectedTool.coordinates);
+        if (selectedTool.coordinate) {
+          await saveCoordinate(selectedTool.coordinate);
         }
 
-        await fetchTools(); // Refresh data
+        await fetchTools();
         showForm = false;
         selectedTool = null;
       } catch (err) {
@@ -184,7 +194,7 @@
           <th>Type</th>
           <th>Diameter</th>
           <th>Description</th>
-          <th>Coordinates</th>
+          <th>Coordinate</th>
           <th>Actions</th>
         </tr>
         </thead>
@@ -195,7 +205,19 @@
             <td>{tool.type}</td>
             <td>{tool.diameter} {tool.tool_unit}</td>
             <td>{tool.description}</td>
-            <td>{tool.coordinates?.length || 0}</td>
+            <td>
+              {#if tool.coordinate}
+                {tool.coordinate.name}:
+                <input
+                        type="number"
+                        step="0.0001"
+                        bind:value={tool.coordinate.z}
+                        on:blur={() => updateCoordinateZ(tool.coordinate)}
+                />
+              {:else}
+                None
+              {/if}
+            </td>
             <td>
               <button on:click={() => editTool(tool)}>Edit</button>
               <button on:click={() => deleteTool(tool.id)}>Delete</button>
@@ -247,21 +269,19 @@
         </label>
       </div>
 
-      <h3>Coordinates</h3>
-      {#if selectedTool.coordinates?.length}
-        {#each selectedTool.coordinates as coord, index (coord.name)}
-          <div class="coordinate-row">
-            <label>Name:
-              <input bind:value={coord.name} required />
-            </label>
-            <label>Z:
-              <input type="number" step="0.0001" bind:value={coord.z} required />
-            </label>
-            <button type="button" on:click={() => removeCoordinate(index)}>Remove</button>
-          </div>
-        {/each}
+      <h3>Coordinate</h3>
+      {#if !selectedTool.coordinate}
+        <button type="button" on:click={addCoordinate}>Add Coordinate</button>
+      {:else}
+        <div class="coordinate-row">
+          <label>Name:
+            <input bind:value={selectedTool.coordinate.name} required />
+          </label>
+          <label>Z:
+            <input type="number" step="0.0001" bind:value={selectedTool.coordinate.z} required />
+          </label>
+        </div>
       {/if}
-      <button type="button" on:click={addCoordinate}>Add Coordinate</button>
 
       <div class="form-actions">
         <button type="submit">Save</button>
