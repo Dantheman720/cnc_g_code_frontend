@@ -8,6 +8,7 @@
   let showForm: boolean = false;
   let loading: boolean = false;
   let error: string | null = null;
+  let searchTerm: string = ''; // Added search term variable
 
   const API_URL = 'http://192.168.4.187:8000/api/router-bits';
   const COORDINATES_API_URL = 'http://192.168.4.187:8000/api/router-bits/coordinates';
@@ -28,10 +29,12 @@
       const toolsData = await toolsResponse.json() as Tool[];
       const coordsData = await coordsResponse.json() as BitCoordinate[];
 
-      tools = toolsData.map(tool => ({
-        ...tool,
-        coordinate: coordsData.find(coord => coord.bit_id === tool.id)
-      }));
+      tools = toolsData
+              .map(tool => ({
+                ...tool,
+                coordinate: coordsData.find(coord => coord.bit_id === tool.id)
+              }))
+              .sort((a, b) => a.name.localeCompare(b.name));
     } catch (err) {
       error = err instanceof Error ? err.message : 'An error occurred';
       console.error('Failed to fetch data:', err);
@@ -39,6 +42,11 @@
       loading = false;
     }
   }
+
+  // Computed filtered tools based on search term
+  $: filteredTools = tools.filter(tool =>
+          tool.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   async function saveCoordinate(coordinate: BitCoordinate): Promise<void> {
     try {
@@ -181,10 +189,18 @@
     <p class="error">Error: {error}</p>
     <button on:click={fetchTools}>Retry</button>
   {:else if !showForm}
-    <button on:click={createTool}>Add New Tool</button>
-    <button on:click={fetchTools}>Refresh</button>
+    <div class="controls">
+      <button on:click={createTool}>Add New Tool</button>
+      <button on:click={fetchTools}>Refresh</button>
+      <input
+              type="text"
+              placeholder="Search by name..."
+              bind:value={searchTerm}
+              class="search-input"
+      >
+    </div>
 
-    {#if tools.length === 0}
+    {#if filteredTools.length === 0}
       <p>No tools found</p>
     {:else}
       <table>
@@ -199,7 +215,7 @@
         </tr>
         </thead>
         <tbody>
-        {#each tools as tool (tool.id)}
+        {#each filteredTools as tool (tool.id)}
           <tr>
             <td>{tool.name}</td>
             <td>{tool.type}</td>
@@ -325,6 +341,19 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+  }
+
+  .controls {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    align-items: center;
+  }
+
+  .search-input {
+    padding: 0.5rem;
+    flex-grow: 1;
+    max-width: 300px;
   }
 
   .coordinate-row {
