@@ -1,8 +1,8 @@
-<!-- ToolManager.svelte -->
+<!-- src/lib/ToolManager.svelte -->
 <script lang="ts">
     import { onMount } from 'svelte';
     import { v4 as uuidv4 } from 'uuid';
-    import type { Tool, BitCoordinate } from './types';
+    import type { Tool, BitCoordinate } from '../types';
 
     export let tools: Tool[] = [];
     let selectedTool: Tool | null = null;
@@ -13,6 +13,7 @@
 
     const API_URL = 'http://192.168.4.187:8000/api/router-bits';
     const COORDINATES_API_URL = 'http://192.168.4.187:8000/api/router-bits/coordinates';
+    const GCODE_API_URL = 'http://192.168.4.187:8000/api/gcode';
 
     async function fetchTools(): Promise<void> {
         try {
@@ -75,6 +76,55 @@
         } catch (err) {
             error = err instanceof Error ? err.message : 'Failed to update coordinate';
             console.error('Coordinate update error:', err);
+        }
+    }
+
+    async function generateGcode(tool: Tool): Promise<void> {
+        try {
+            loading = true;
+            error = null;
+
+            // Basic G-code generation logic (customize as needed)
+            const gcode = [
+                `T${tool.tool_number} M6`, // Tool change
+                `S${tool.tool_spindle_speed}`, // Spindle speed
+                'G90', // Absolute positioning
+                'G21', // Units in mm (adjust based on tool_unit)
+                tool.coordinate ? `G00 Z${tool.coordinate.z}` : 'G00 Z0', // Rapid to Z position
+                'G00 X0 Y0', // Move to origin
+                `F${tool.tool_feed_cutting}`, // Feed rate
+                'M3', // Spindle on
+                // Add more G-code commands as needed
+                'M5', // Spindle off
+                'M30' // Program end
+            ].join('\n');
+
+            // Optional: Send to API
+            const response = await fetch(`${GCODE_API_URL}/generate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tool_id: tool.id, gcode })
+            });
+
+            if (!response.ok) throw new Error('Failed to generate G-code');
+
+            const result = await response.json();
+            console.log('Generated G-code:', result.gcode || gcode);
+
+            // For now, we'll just download the G-code
+            const blob = new Blob([gcode], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${tool.name}_gcode.gcode`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+
+        } catch (err) {
+            error = err instanceof Error ? err.message : 'Failed to generate G-code';
+            console.error('G-code generation error:', err);
+        } finally {
+            loading = false;
         }
     }
 
@@ -226,6 +276,7 @@
                         <td>
                             <button on:click={() => editTool(tool)}>Edit</button>
                             <button on:click={() => deleteTool(tool.id)}>Delete</button>
+                            <button on:click={() => generateGcode(tool)}>Generate G-code</button>
                         </td>
                     </tr>
                 {/each}
@@ -362,6 +413,7 @@
     button {
         padding: 0.5rem 1rem;
         cursor: pointer;
+        margin-right: 0.5rem; /* Added spacing between buttons */
     }
 
     .error {
