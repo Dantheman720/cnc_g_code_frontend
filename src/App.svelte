@@ -2,6 +2,7 @@
 <script lang="ts">
   import ToolManager from './lib/ToolManager.svelte';
   import Operations from './lib/Operations.svelte';
+  import Settings from './lib/Settings.svelte';
 
   let activeTab: string = 'tools';
 
@@ -32,10 +33,7 @@
     {:else if activeTab === 'operations'}
       <Operations />
     {:else if activeTab === 'settings'}
-      <div class="placeholder">
-        <h2>Settings</h2>
-        <p>Settings configuration coming soon...</p>
-      </div>
+      <Settings />
     {/if}
   </section>
 
@@ -90,12 +88,6 @@
   .content {
     flex: 1;
     padding: 1rem;
-  }
-
-  .placeholder {
-    padding: 2rem;
-    text-align: center;
-    color: #666;
   }
 
   footer {
